@@ -1,0 +1,40 @@
+{
+  "name": "ark-vision-bridge",
+  "version": "1.0.0",
+  "description": "MCP 视觉桥接服务：为无多模态能力的文本型 AI 编码代理（Claude Code + DeepSeek）提供识图能力，基于火山方舟全新 Responses API（doubao-seed-2-0 视觉模型），对标 mcp-vision-bridge",
+  "type": "module",
+  "bin": {
+    "ark-vision-bridge": "src/index.js"
+  },
+  "files": [
+    "src",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node src/index.js",
+    "make-test-image": "node scripts/make-test-image.mjs",
+    "setup-config": "node scripts/setup-config.mjs",
+    "verify": "node scripts/verify.mjs"
+  },
+  "keywords": [
+    "mcp",
+    "vision",
+    "multimodal",
+    "volcengine",
+    "ark",
+    "doubao",
+    "responses-api",
+    "claude-code",
+    "ocr"
+  ],
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "openai": "^7.4.0",
+    "sharp": "^0.35.3",
+    "zod": "^3.24.0"
+  }
+}

@@ -145,7 +145,7 @@ vision-bridge/
 
 ## 📄 许可证
 
-MIT © produce（完整条款见 [LICENSE](LICENSE)）
+MIT © produce123（完整条款见 [LICENSE](LICENSE)）
 
 ## 🔗 参考
 

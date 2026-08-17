@@ -1,6 +1,6 @@
 {
   "name": "ark-vision-bridge",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "MCP 视觉桥接服务：为无多模态能力的文本型 AI 编码代理（Claude Code + DeepSeek）提供识图能力，基于火山方舟全新 Responses API（doubao-seed-2-0 视觉模型），对标 mcp-vision-bridge",
   "type": "module",
   "author": "produce123",

@@ -14,8 +14,8 @@ import sharp from "sharp";
 
 const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // Ark 单图硬上限 10MB
 const COMPRESS_THRESHOLD_BYTES = 4 * 1024 * 1024; // 超过 4MB 触发压缩
-const MAX_DIMENSION = 2560; // 超过该单边长度则缩小
-const JPEG_QUALITY = 82;
+const DEFAULT_MAX_DIMENSION = 1600; // 默认长边上限（标准档），可按档位覆盖
+const DEFAULT_JPEG_QUALITY = 82;
 
 const EXT_MIME = {
   ".jpg": "image/jpeg",
@@ -45,18 +45,18 @@ function sniffMime(buf) {
   return null;
 }
 
-async function compressImage(buf) {
-  let quality = JPEG_QUALITY;
+async function compressImage(buf, maxDimension, quality) {
+  let q = quality;
   const pipeline = () =>
     sharp(buf, { failOn: "none" })
       .rotate() // 依据 EXIF 方向自动旋转
       .flatten({ background: "#ffffff" }) // 透明底补白，转 JPEG 不显黑
-      .resize(MAX_DIMENSION, MAX_DIMENSION, { fit: "inside", withoutEnlargement: true });
-  let out = await pipeline().jpeg({ quality }).toBuffer();
+      .resize(maxDimension, maxDimension, { fit: "inside", withoutEnlargement: true });
+  let out = await pipeline().jpeg({ quality: q }).toBuffer();
   // 若仍超 10MB，逐步降质量直到达标
-  while (out.length > MAX_IMAGE_BYTES && quality > 30) {
-    quality -= 15;
-    out = await pipeline().jpeg({ quality }).toBuffer();
+  while (out.length > MAX_IMAGE_BYTES && q > 30) {
+    q -= 15;
+    out = await pipeline().jpeg({ quality: q }).toBuffer();
   }
   return out;
 }
@@ -66,7 +66,11 @@ async function compressImage(buf) {
  * @param {string} imagePath 绝对或相对路径
  * @param {string} [cwd] 相对路径解析基准，默认进程 cwd
  */
-export async function loadImageData(imagePath, cwd = process.cwd()) {
+export async function loadImageData(
+  imagePath,
+  cwd = process.cwd(),
+  { maxDimension = DEFAULT_MAX_DIMENSION, jpegQuality = DEFAULT_JPEG_QUALITY } = {},
+) {
   const abs = path.resolve(cwd, imagePath);
   let st;
   try {
@@ -105,11 +109,11 @@ export async function loadImageData(imagePath, cwd = process.cwd()) {
   let outMime = mime;
   const originalSize = buf.length;
   const tooBig = buf.length > COMPRESS_THRESHOLD_BYTES;
-  const tooWide = width != null && height != null && (width > MAX_DIMENSION || height > MAX_DIMENSION);
+  const tooWide = width != null && height != null && (width > maxDimension || height > maxDimension);
 
   if (tooBig || tooWide) {
     try {
-      processed = await compressImage(buf);
+      processed = await compressImage(buf, maxDimension, jpegQuality);
       outMime = "image/jpeg";
     } catch (e) {
       if (buf.length > MAX_IMAGE_BYTES) {
@@ -118,6 +122,17 @@ export async function loadImageData(imagePath, cwd = process.cwd()) {
         );
       }
       // 压缩失败但体积可接受 → 保留原图
+    }
+  }
+
+  // 压缩后重新读取实际尺寸（供调用方做元信息注入）
+  if (processed !== buf) {
+    try {
+      const meta = await sharp(processed, { failOn: "none" }).metadata();
+      width = meta.width ?? width;
+      height = meta.height ?? height;
+    } catch {
+      /* 保留原尺寸 */
     }
   }
 

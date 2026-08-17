@@ -58,9 +58,10 @@ set ARK_API_KEY=ark-xxxx && npm run setup-config
 ## 架构说明
 
 - **入口** `src/index.js`：MCP stdio 服务，注册 5 个工具；启动时校验 `ARK_API_KEY`，缺失即退出（exit 1）。
+- **`src/tiers.js`**：三档识别模式（economy/standard/detailed）。档位决定图像分辨率（1280/1600/2048px）与提示词详细度；工具参数 `detail_level` 显式覆盖，否则按工具默认（ui/diagram→detailed，其余→standard）。
 - **`src/ark.js`**：`callVision` —— Responses 优先，超时/网络/4xx/5xx/限流自动降级 Chat Completions；429/408/5xx 按指数退避（1s/2s/4s）重试 `ARK_MAX_ATTEMPTS` 次；两套接口都失败抛 `AllInterfacesFailed`（透出两侧错误码/HTTP 状态/requestId）。两套请求体独立构造，不混用字段。
-- **`src/image.js`**：本地图片读取、文件头魔数校验、超 4MB 或单边超 2560px 自动用 sharp 转 JPEG（`rotate` 修 EXIF、透明底补白、质量 82），保证不超单图 10MB。
-- **`src/prompts.js`**：5 个工具的提示词模板。
+- **`src/image.js`**：本地图片读取、文件头魔数校验、超过档位长边或 4MB 自动用 sharp 缩小/转 JPEG（`rotate` 修 EXIF、透明底补白、质量按档位），保证不超单图 10MB；返回压缩后的实际尺寸供元信息注入。
+- **`src/prompts.js`**：5 个工具的提示词模板，按档位差异化（economy 精简 / standard 结构化 / detailed 详尽 + Mermaid/色板/组件树等额外产物）；`buildPrompt` 接收 `imageMeta` 注入图片元信息（尺寸/格式/大小）。
 - **`scripts/`**：`make-test-image.mjs`（生成测试图）、`setup-config.mjs`（注册全局 MCP，密钥脱敏打印）、`verify.mjs`（E2E 验证）、`call-tool.mjs`。
 
 ## 上游致敬（本项目的设计来源，必须保留）

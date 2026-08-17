@@ -28,6 +28,22 @@ Claude Code / DeepSeek 这类**文本型代理看不到图片**。`vision-bridge
 
 ---
 
+## 🎚️ 三档识别模式（detail_level）
+
+所有工具支持可选参数 `detail_level`，控制「省 token ↔ 识别详细度」的旋钮：
+
+| 档位 | 图像长边上限 | 输出风格 | 适合场景 |
+|------|-------------|---------|---------|
+| `economy`（省token） | **1280px** | 简洁要点式 | OCR 快速提取、低要求截图、追求速度/成本 |
+| `standard`（标准） | **1600px** | 结构化、可独立引用 | analyze / diagnose / OCR 默认 |
+| `detailed`（详细） | **2048px** | 详尽分节 + 额外产物（UI 色板/组件树、图表 Mermaid 语法） | UI 还原、复杂架构图、高精度要求 |
+
+- **不传** `detail_level` → 按工具**自动选择**（`ui_to_artifact` / `understand_technical_diagram` 默认 `detailed`，其余默认 `standard`）。
+- **省 token 原理**：视觉模型的 token 消耗与「图像分辨率（像素）」近似线性，与文件字节无关。`economy`(1280px) 相对压缩前的 2560px 可省约 **75% 视觉 token**；`detailed`(2048px) 则保证小字/细节不丢失。
+- 调用方（文本型 AI 代理）可自行判断，或**询问用户**后传入；例如重要/复杂图片用 `detailed`，追求速度与成本用 `economy`。
+
+---
+
 ## 📦 安装
 
 ### 方式 A：复制本项目 + 让 Claude Code 自动配置（推荐，零手动）

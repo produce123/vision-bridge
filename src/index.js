@@ -5,6 +5,10 @@
  * 为无多模态能力的文本型 AI 代理（Claude Code + DeepSeek）提供识图能力。
  * 通过标准 MCP stdio 协议对外暴露 5 个视觉工具。
  *
+ * 三档识别模式：每个工具支持 detail_level = economy / standard / detailed，
+ * 不传则按工具自动选择（见 src/tiers.js）。档位决定图像分辨率、提示词详细度
+ * 与额外结构化输出，是「省 token」与「识别详细度」之间的旋钮。
+ *
  * 配置：环境变量 ARK_API_KEY / ARK_MODEL_ID（必填，MCP 配置 env 中提供）。
  */
 
@@ -14,6 +18,7 @@ import { z } from "zod";
 import { callVision, ArkError } from "./ark.js";
 import { loadImageData } from "./image.js";
 import { buildPrompt } from "./prompts.js";
+import { TIERS, resolveTier, DETAIL_LEVELS } from "./tiers.js";
 
 const ARK_API_KEY = process.env.ARK_API_KEY || "";
 const ARK_MODEL_ID = process.env.ARK_MODEL_ID || "doubao-seed-2-0-lite-260428";
@@ -25,21 +30,31 @@ if (!ARK_API_KEY) {
   process.exit(1);
 }
 
-const server = new McpServer({ name: "ark-vision-bridge", version: "1.0.0" });
+const server = new McpServer({ name: "ark-vision-bridge", version: "1.1.0" });
 const log = (...a) => console.error("[vision-bridge]", ...a);
 
-/** 读图 → 转 data URI → 调 Ark Responses API → 返回模型文本 */
-async function runVision(imagePath, prompt) {
-  log(`读取图片: ${imagePath}`);
-  const img = await loadImageData(imagePath);
+/** 读图（按档位分辨率）→ 转 data URI → 注入元信息 → 组装提示词 → 调 Ark → 返回文本 */
+async function runVision(toolKey, imagePath, args) {
+  const tier = resolveTier(toolKey, args?.detail_level);
+  const cfg = TIERS[tier];
+  log(`[${cfg.label}档] 读取图片: ${imagePath}（长边≤${cfg.maxDimension}px）`);
+  const img = await loadImageData(imagePath, process.cwd(), {
+    maxDimension: cfg.maxDimension,
+    jpegQuality: cfg.jpegQuality,
+  });
   const dim = img.width && img.height ? `，${img.width}x${img.height}` : "";
   log(
     `图片就绪: ${img.mime} ${(img.size / 1024).toFixed(1)}KB${dim}` +
       (img.compressed ? `（已压缩，原始 ${(img.originalSize / 1024).toFixed(1)}KB）` : ""),
   );
 
+  const imageMeta =
+    `${img.width}×${img.height} · ${img.mime} · ${(img.size / 1024).toFixed(0)}KB` +
+    (img.compressed ? "（已压缩）" : "");
+  const prompt = buildPrompt(toolKey, { ...args, tier, imageMeta });
+
   // 双接口自动降级：Responses 优先（input/input_image），失败自动切 Chat Completions（messages/image_url）
-  log(`调用 ${ARK_MODEL_ID}（Responses 优先，失败自动降级 Chat Completions）...`);
+  log(`调用 ${ARK_MODEL_ID}（${cfg.label}档）...`);
   const text = await callVision({
     model: ARK_MODEL_ID,
     apiKey: ARK_API_KEY,
@@ -69,6 +84,13 @@ const imagePathField = z
   .string()
   .describe("本地图片路径（绝对或相对路径），支持 jpg/png/gif/webp/bmp/tiff/avif");
 
+const detailLevelField = z
+  .enum(DETAIL_LEVELS)
+  .optional()
+  .describe(
+    "识别详细程度档位：economy=省token（低分辨率1280px+精简输出）/ standard=标准（默认1600px）/ detailed=详细（2048px+详尽输出+额外结构化产物）。不传则按工具自动选择。图片重要/复杂或用户要求详尽时用 detailed；追求速度与省 token 用 economy；拿不准可询问用户。",
+  );
+
 // ─── 1. 通用图片解析 ─────────────────────────────────────────────
 server.tool(
   "analyze_image",
@@ -76,10 +98,11 @@ server.tool(
   {
     image_path: imagePathField,
     question: z.string().optional().describe("可选：希望视觉模型重点回答的问题"),
+    detail_level: detailLevelField,
   },
   async (args) => {
     try {
-      return ok(await runVision(args.image_path, buildPrompt("analyze_image", args)));
+      return ok(await runVision("analyze_image", args.image_path, args));
     } catch (e) {
       return fail(e);
     }
@@ -93,10 +116,11 @@ server.tool(
   {
     image_path: imagePathField.describe("报错截图的本地路径"),
     context: z.string().optional().describe("可选：补充的项目/代码上下文，帮助定位"),
+    detail_level: detailLevelField,
   },
   async (args) => {
     try {
-      return ok(await runVision(args.image_path, buildPrompt("diagnose", args)));
+      return ok(await runVision("diagnose", args.image_path, args));
     } catch (e) {
       return fail(e);
     }
@@ -109,10 +133,11 @@ server.tool(
   "OCR 文字提取：提取图片中全部文字，逐字准确、保持原样与阅读顺序，适合截图/文档/表单等。",
   {
     image_path: imagePathField.describe("截图或文档图片的本地路径"),
+    detail_level: detailLevelField,
   },
   async (args) => {
     try {
-      return ok(await runVision(args.image_path, buildPrompt("ocr", args)));
+      return ok(await runVision("ocr", args.image_path, args));
     } catch (e) {
       return fail(e);
     }
@@ -127,14 +152,12 @@ server.tool(
     image_path: imagePathField.describe("UI 截图/设计的本地路径"),
     framework: z.enum(["html", "react", "vue"]).optional().describe("目标前端框架，默认 html"),
     description: z.string().optional().describe("可选：功能需求说明，帮助还原"),
+    detail_level: detailLevelField,
   },
   async (args) => {
     try {
       return ok(
-        await runVision(
-          args.image_path,
-          buildPrompt("ui", { ...args, framework: args.framework || "html" }),
-        ),
+        await runVision("ui", args.image_path, { ...args, framework: args.framework || "html" }),
       );
     } catch (e) {
       return fail(e);
@@ -153,10 +176,11 @@ server.tool(
       .optional()
       .describe("可选：图表类型提示"),
     question: z.string().optional().describe("可选：希望重点回答的问题"),
+    detail_level: detailLevelField,
   },
   async (args) => {
     try {
-      return ok(await runVision(args.image_path, buildPrompt("diagram", args)));
+      return ok(await runVision("diagram", args.image_path, args));
     } catch (e) {
       return fail(e);
     }
@@ -168,6 +192,6 @@ const transport = new StdioServerTransport();
 log(
   `ark-vision-bridge 启动 | 模型=${ARK_MODEL_ID} | 超时=${ARK_TIMEOUT_MS}ms | 重试=${ARK_MAX_ATTEMPTS}次 | ` +
     `base=${process.env.ARK_BASE_URL || "https://ark.cn-beijing.volces.com/api/v3"} | ` +
-    `双接口：Responses 优先，失败自动降级 Chat Completions`,
+    `档位: economy=${TIERS.economy.maxDimension}px / standard=${TIERS.standard.maxDimension}px / detailed=${TIERS.detailed.maxDimension}px`,
 );
 await server.connect(transport);

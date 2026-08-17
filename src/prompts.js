@@ -1,19 +1,42 @@
 /**
- * 5 个 MCP 工具的提示词模板。
+ * 5 个 MCP 工具的提示词模板（按档位 economy / standard / detailed 差异化）。
  *
  * 核心设计（参考 mcp-vision-bridge）：视觉模型的输出会被「看不到图片的文本型
  * AI 代理」消费，因此提示词强制要求：详尽、完整、独立成文、逐字引用文字，
  * 让读者无需看图即可理解、引用和行动。
+ *
+ * 档位语义：
+ *  - economy  省 token：低分辨率 + 精简要点式输出
+ *  - standard 标准（多数工具默认）：结构化、可独立引用
+ *  - detailed 详细（ui / diagram 默认）：高分辨率 + 详尽输出 + 额外结构化产物
  */
 
+/** 各档位的通用输出要求（拼在主体之后） */
+const TIER_REQ = {
+  economy: "请用简洁、要点式的方式输出，去除冗余，只保留关键信息。",
+  standard: "请输出完整、可独立引用的内容。",
+  detailed: "请给出详尽、完整、可独立引用的输出：逐字引用所有可见文字，不遗漏任何细节，按结构分节输出。",
+};
+
 export function buildPrompt(tool, opts = {}) {
-  const { question = "", context = "", framework = "html", description = "", diagramType = "general" } = opts;
+  const {
+    question = "",
+    context = "",
+    framework = "html",
+    description = "",
+    diagramType = "general",
+    tier = "standard",
+    imageMeta = "",
+  } = opts;
+  const tierReq = TIER_REQ[tier] || TIER_REQ.standard;
+  const metaBlock = imageMeta ? `[图片信息] ${imageMeta}` : "";
 
   switch (tool) {
     case "analyze_image":
       return [
         "你是一个给「看不到图片的文本型 AI 编程代理」提供视觉信息的助手。",
         "阅读你输出的人无法看到原图，因此描述必须：内容详尽完整、独立成文、可被直接引用。",
+        metaBlock,
         "",
         ...(question.trim()
           ? [
@@ -28,37 +51,54 @@ export function buildPrompt(tool, opts = {}) {
               "4) 颜色、尺寸、视觉状态（选中 / 禁用 / 悬停 / 加载等）；",
               "5) 任何异常、破损或值得注意的细节。",
             ]),
+        tierReq,
+        ...(tier === "detailed" ? ["最后用 3-5 句话给出整体总结。" ] : []),
         "若图片模糊或无法辨认，请明确说明，绝不臆造图中不存在的内容。",
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
     case "diagnose":
       return [
         "你是一个「看不见截图」的编程代理的报错诊断助手。",
         `调用方补充的项目/代码上下文（可能为空）：${context || "无"}`,
+        metaBlock,
         "",
         "请对这张报错截图进行专业的故障定位分析：",
         "1) 逐字引用错误信息、异常类型、堆栈帧；",
         "2) 指出关键报错行、文件、行号、相关变量；",
         "3) 推断最可能的故障原因（结合上下文；信息不足时列出假设并说明证据）；",
         "4) 给出按优先级排列的修复建议，步骤具体可执行。",
+        ...(tier === "detailed"
+          ? [
+              "5) 对每一条修复建议给出可直接执行的命令 / 代码片段 / 配置修改；",
+              "6) 明确指出截图中有但无法确认含义的部分。",
+            ]
+          : []),
+        tierReq,
         "若截图不是报错截图，请直接说明你实际看到的内容。",
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
     case "ocr":
       return [
         "对这张图片执行 OCR 文字提取。",
+        metaBlock,
+        "",
         "要求：",
         "1) 提取图中全部文字，逐字准确，保持原有大小写、间距、换行与阅读顺序；",
         "2) 按区域/区块组织输出，区块内保持原始行序；",
         "3) 只输出图中真实存在的文字，不要添加任何解读、注释或总结；",
         "4) 若有文字模糊无法辨认，用 [无法辨认] 标记并尽力还原上下文。",
-      ].join("\n");
+        ...(tier === "detailed"
+          ? ["5) 若为表格/表单，用 Markdown 表格保持行列结构。"]
+          : []),
+        tierReq,
+      ].filter(Boolean).join("\n");
 
     case "ui":
       return [
         "你是一个「看不见截图」的编程代理的前端还原助手。",
         `目标框架：${framework}（默认 html）`,
         `调用方补充的功能/需求说明：${description || "无"}`,
+        metaBlock,
         "",
         "请分析这张 UI 截图，输出完整的可运行前端代码。格式：",
         "【DesignQA】先简要回答：这是什么界面？主色调/风格？组件清单（按钮/输入框/弹窗/菜单/状态栏等）？布局结构？",
@@ -67,13 +107,21 @@ export function buildPrompt(tool, opts = {}) {
         "- 使用内联 CSS 或 <style>，避免外部依赖；",
         "- 中文文案保留，英文/数字原文保留；",
         "- 交互元素（按钮 hover 等）给基础样式。",
-      ].join("\n");
+        ...(tier === "detailed"
+          ? [
+              "【色板】列出所有主要颜色的 HEX 值。",
+              "【组件树】输出页面组件层级树（父→子，标注可交互元素）。",
+            ]
+          : []),
+        tierReq,
+      ].filter(Boolean).join("\n");
 
     case "diagram":
       return [
         "你是一个「看不见截图」的编程代理的技术图表解析助手。",
         `调用方指定的图表类型（可能不准确）：${diagramType}`,
         ...(question.trim() ? [`调用方的问题：${question.trim()}`] : []),
+        metaBlock,
         "",
         "请解析这张技术图表（流程图 / 架构图 / 网络拓扑 / ER图 / 时序图 / 工程图纸等）：",
         "1) 图表类型判断与整体用途；",
@@ -81,8 +129,12 @@ export function buildPrompt(tool, opts = {}) {
         "3) 所有连接关系：A→B 表示什么（数据流 / 依赖 / 调用 / 继承等）；",
         "4) 关键路径、循环、分支、异常处理；",
         "5) 用文字重述，让读者无需看图即可还原整张图的结构。",
+        ...(tier === "detailed"
+          ? ["6) 最后用 Mermaid 语法重述整张图，使读者可直接重建。"]
+          : []),
+        tierReq,
         "若识别为普通非图表图片，请说明并转而描述图片内容。",
-      ].join("\n");
+      ].filter(Boolean).join("\n");
 
     default:
       throw new Error(`未知工具：${tool}`);

@@ -19,6 +19,8 @@
 - `vision-bridge` 注册为本机可用 MCP：默认**用户级（全局）注册**，任何项目都能用。
 - 5 个工具（`analyze_image` / `diagnose_error_screenshot` / `extract_text_from_screenshot` / `ui_to_artifact` / `understand_technical_diagram`）可被 Claude Code 调用。
 
+> **关于三档识别**：5 个工具均支持可选参数 `detail_level`（`economy` / `standard` / `detailed`），控制「省 token ↔ 识别详细度」。不传则按工具自动选择（`ui_to_artifact` / `understand_technical_diagram` 默认 `detailed`，其余默认 `standard`）。图片重要/复杂或用户要求详尽时用 `detailed`；追求速度与省 token 用 `economy`；拿不准可询问用户。详见 [README.md](README.md)「三档识别模式」。
+
 ---
 
 ## 前置检查（先做，不要跳过）
